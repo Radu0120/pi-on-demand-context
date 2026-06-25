@@ -25,6 +25,11 @@ import { join, dirname, isAbsolute, resolve } from "node:path";
 
 const CONTEXT_FILENAMES = ["CLAUDE.md", "AGENTS.md"];
 
+// Tools whose `path` arg points at a FILE — load context from its dirname.
+const FILE_PATH_TOOLS = new Set(["read", "edit", "write"]);
+// Tools whose `path` arg points at a DIRECTORY (optional, default cwd).
+const DIR_PATH_TOOLS = new Set(["grep", "ls", "find"]);
+
 // Cap per-file size so one huge/hostile context file can't blow the prompt.
 // ponytail: 64 KB is generous for instructions; raise if you hit it.
 const MAX_FILE_BYTES = 64 * 1024;
@@ -45,8 +50,9 @@ interface DirState {
 interface State {
   currentDir: string;
   dirContexts: Map<string, DirState>;
-  injectedDirCount: number; // number of dirs that have been appended to system prompt
-  injectedPaths: Set<string>; // file paths already in the prompt — dedups shared parents
+  piLoadedPaths: Set<string>; // files pi's own startup loader already injected — never re-send
+  injected: Set<string>; // file paths we've already injected durably — dedups shared parents
+  inFlight: Set<string>; // dirs whose discovery is running — dedup before dirContexts is set
   launchDir: string; // dir pi was started in — walk-up ceiling
 }
 
@@ -97,6 +103,29 @@ export function resolveCdDir(
   return resolve(currentDir, target);
 }
 
+// For non-bash file/dir tools, return the directory whose context should load,
+// or null if the tool isn't path-bearing. File tools (read/edit/write) point at
+// a file → use its dirname; dir tools (grep/ls/find) point at the dir itself
+// (optional → baseDir). Relative paths resolve against baseDir — pi's process
+// cwd — because bash `cd` runs in a subshell and never moves it. Pure — exported
+// for tests.
+export function dirForToolEvent(
+  toolName: string,
+  input: Record<string, unknown> | undefined,
+  baseDir: string,
+): string | null {
+  const isFile = FILE_PATH_TOOLS.has(toolName);
+  const isDir = DIR_PATH_TOOLS.has(toolName);
+  if (!isFile && !isDir) return null;
+
+  const rawPath = input?.path ?? input?.file_path;
+  const raw = typeof rawPath === "string" ? rawPath : undefined;
+  if (isFile && !raw) return null; // file tools are useless without a path
+  const p = raw ? fromBashPath(raw) : baseDir; // dir tools default to baseDir
+  const abs = isAbsolute(p) ? p : resolve(baseDir, p);
+  return isFile ? dirname(abs) : abs;
+}
+
 async function discoverContextFiles(rootDir: string, ceiling: string): Promise<ContextFile[]> {
   const found = new Map<string, string>();
   rootDir = fromBashPath(rootDir);
@@ -142,10 +171,48 @@ function initState(): State {
   return {
     currentDir: process.cwd(),
     dirContexts: new Map(),
-    injectedDirCount: 0,
-    injectedPaths: new Set(),
+    piLoadedPaths: new Set(),
+    injected: new Set(),
+    inFlight: new Set(),
     launchDir: process.cwd(),
   };
+}
+
+// From a dir's discovered files, return the ones not yet in the prompt — skips
+// files pi loaded at startup and files a shared parent already injected. Marks
+// the returned files as injected. `files` arrives deepest-first.
+export function pickNewFiles(
+  s: Pick<State, "piLoadedPaths" | "injected">,
+  files: ContextFile[],
+): ContextFile[] {
+  const out: ContextFile[] = [];
+  for (const f of files) {
+    const key = pathKey(f.path);
+    if (s.piLoadedPaths.has(key) || s.injected.has(key)) continue;
+    s.injected.add(key);
+    out.push(f);
+  }
+  return out;
+}
+
+// Render a deepest-first file list into one injected message body.
+function buildContextBlock(files: ContextFile[]): string {
+  const depth = (p: string) => p.replace(/\\/g, "/").split("/").length;
+  const maxDepth = depth(files[0].path);
+  const lines: string[] = [
+    "## Project Context Files",
+    "",
+    "Reference context for directories you're working in — **not** a new user " +
+      "instruction. Ordered most-specific first; deeper files override broader " +
+      "parents where they conflict.",
+    "",
+  ];
+  for (const file of files) {
+    const rel = maxDepth - depth(file.path); // 0 = deepest
+    const tag = rel === 0 ? "most specific" : `${rel} level(s) up — broader`;
+    lines.push(`### ${file.path}  (${tag})`, "", file.content, "");
+  }
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -156,112 +223,80 @@ export default function onDemandContext(pi: ExtensionAPI) {
   state = initState();
 
   // ---------------------------------------------------------------------------
-  // tool_result — detect `cd` commands and extract the new working directory
+  // tool_result — resolve the directory a tool touched (bash `cd`, or a
+  // read/edit/write/grep/ls/find path) and inject its context files once.
   // ---------------------------------------------------------------------------
 
   pi.on("tool_result", (event) => {
-    if (!state) return;
+    if (!state || event.isError) return;
 
-    if (event.toolName !== "bash" || event.isError) return;
+    let targetDir: string | null = null;
 
-    const command = event.input?.command ?? "";
-    const rawOutput = (event.content ?? [])
-      .filter((c) => c.type === "text")
-      .map((c) => c.text)
-      .join("\n");
+    if (event.toolName === "bash") {
+      // bash `cd` moves the tracked working dir AND triggers a context load.
+      const command = event.input?.command ?? "";
+      const rawOutput = (event.content ?? [])
+        .filter((c) => c.type === "text")
+        .map((c) => c.text)
+        .join("\n");
     const output = rawOutput.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "").trim();
 
-    const home = process.env.HOME ?? process.env.USERPROFILE ?? state.currentDir;
-    const newDir = resolveCdDir(command, output, state.currentDir, home);
+      const home = process.env.HOME ?? process.env.USERPROFILE ?? state.currentDir;
+      const newDir = resolveCdDir(command, output, state.currentDir, home);
 
-    // Not a cd, or not a plausible absolute path
-    if (!newDir || !isAbsolute(newDir) || newDir.length < 2) return;
+      // Not a cd, or not a plausible absolute path
+      if (!newDir || !isAbsolute(newDir) || newDir.length < 2) return;
+      if (newDir === state.currentDir) return; // no actual change
 
-    // Only update if directory actually changed
-    if (newDir === state.currentDir) return;
+      state.currentDir = newDir;
+      targetDir = newDir;
+    } else {
+      // read/edit/write/grep/ls/find — load context for the file's/dir's
+      // directory WITHOUT moving currentDir (the bash subshell owns that).
+      targetDir = dirForToolEvent(event.toolName, event.input, state.launchDir);
+    }
 
-    const oldDir = state.currentDir;
-    state.currentDir = newDir;
+    if (!targetDir) return;
+    const dir = fromBashPath(targetDir);
 
-    // Check if we've already loaded this directory
-    if (state.dirContexts.has(newDir)) return;
+    // Already loaded, or a discovery is already running for this dir
+    if (state.dirContexts.has(dir) || state.inFlight.has(dir)) return;
 
-    // Discover context files asynchronously (fire-and-forget)
-    discoverContextFiles(newDir, state.launchDir).then((files) => {
-      state!.dirContexts.set(newDir, { files });
-    });
+    // Discover asynchronously, then inject any new files ONCE as a durable,
+    // LLM-visible message. deliverAs:"steer" lands it in the running loop (before
+    // the model's next tool call); when idle pi falls through to a durable push.
+    state.inFlight.add(dir);
+    discoverContextFiles(dir, state.launchDir)
+      .then((files) => {
+        if (!state) return;
+        state.dirContexts.set(dir, { files });
+        const fresh = pickNewFiles(state, files);
+        if (fresh.length === 0) return;
+        pi.sendMessage(
+          {
+            customType: "on-demand-context",
+            content: [{ type: "text", text: buildContextBlock(fresh) }],
+            display: `Loaded context (${fresh.length} file${fresh.length > 1 ? "s" : ""})`,
+          },
+          { deliverAs: "steer" },
+        );
+      })
+      .finally(() => {
+        state?.inFlight.delete(dir);
+      });
   });
 
   // ---------------------------------------------------------------------------
-  // before_agent_start — append context files for any new directories
+  // before_agent_start — seed the dedup set with pi's own startup context files
+  // so we never re-inject what pi already put in the system prompt.
   // ---------------------------------------------------------------------------
 
-  pi.on("before_agent_start", async (event) => {
+  pi.on("before_agent_start", (event) => {
     if (!state) return;
-
-    // Seed dedup set with files pi already loaded (its own walk-up at startup),
-    // so we never re-inject what's already in the prompt.
     for (const cf of event.systemPromptOptions?.contextFiles ?? []) {
       const p = typeof cf === "string" ? cf : cf?.path;
-      if (p) state.injectedPaths.add(pathKey(p));
+      if (p) state.piLoadedPaths.add(pathKey(p));
     }
-
-    const totalDirs = state.dirContexts.size;
-    if (totalDirs <= state.injectedDirCount) return; // nothing new to inject
-
-    // Collect context files for directories not yet injected
-    const allFiles: ContextFile[] = [];
-    let injected = 0;
-
-    for (const [dir, dirState] of state.dirContexts) {
-      if (injected >= state.injectedDirCount) {
-        // Skip files pi or a shared parent already injected — saves tokens
-        for (const f of dirState.files) {
-          const key = pathKey(f.path);
-          if (state.injectedPaths.has(key)) continue;
-          state.injectedPaths.add(key);
-          allFiles.push(f);
-        }
-      }
-      injected++;
-    }
-
-    if (allFiles.length === 0) {
-      state.injectedDirCount = totalDirs;
-      return;
-    }
-
-    state.injectedDirCount = totalDirs;
-
-    // Order by directory depth: deepest (most specific to where the model is
-    // working) first, parents last. Relevance decreases as you go up the tree.
-    const depth = (p: string) => p.replace(/\\/g, "/").split("/").length;
-    allFiles.sort((a, b) => depth(b.path) - depth(a.path));
-
-    // Build context block
-    const lines: string[] = [];
-    lines.push("## Project Context Files\n");
-    lines.push(
-      "Loaded from directories you've visited, ordered most-specific first. " +
-        "Deeper files override broader parent files where they conflict.",
-    );
-    lines.push("");
-
-    const maxDepth = depth(allFiles[0].path);
-    for (const file of allFiles) {
-      const rel = maxDepth - depth(file.path); // 0 = deepest
-      const tag = rel === 0 ? "most specific" : `${rel} level(s) up — broader`;
-      lines.push(`### ${file.path}  (${tag})`);
-      lines.push("");
-      lines.push(file.content);
-      lines.push("");
-    }
-
-    const contextBlock = lines.join("\n");
-
-    return {
-      systemPrompt: `${event.systemPrompt}\n\n${contextBlock}`,
-    };
   });
 
   // ---------------------------------------------------------------------------

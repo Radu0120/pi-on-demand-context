@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { resolve } from "node:path";
-import { resolveCdDir } from "./index.ts";
+import { resolve, dirname } from "node:path";
+import { resolveCdDir, dirForToolEvent, pickNewFiles } from "./index.ts";
 
 const HOME = "/home/radu";
 const CWD = "/proj/app";
+const BASE = "/proj/app";
 
 describe("resolveCdDir", () => {
   it("returns null for non-cd commands", () => {
@@ -37,5 +38,80 @@ describe("resolveCdDir", () => {
     const got = resolveCdDir("cd sub && pwd", "", CWD, HOME)!;
     expect(got.endsWith("sub")).toBe(true);
     expect(got).not.toContain("pwd");
+  });
+});
+
+describe("dirForToolEvent", () => {
+  it("returns null for non-path tools", () => {
+    expect(dirForToolEvent("bash", { command: "ls" }, BASE)).toBeNull();
+    expect(dirForToolEvent("unknown", { path: "/x" }, BASE)).toBeNull();
+  });
+
+  it("file tools (read/edit/write) → dirname of an absolute path", () => {
+    // Multi-char first segment → fromBashPath is a no-op, so dirname is stable
+    // on both win32 and posix.
+    const f = "/proj/app/pkg/__main__.py";
+    expect(dirForToolEvent("read", { path: f }, BASE)).toBe(dirname(f));
+    expect(dirForToolEvent("edit", { path: f }, BASE)).toBe(dirname(f));
+    expect(dirForToolEvent("write", { path: f }, BASE)).toBe(dirname(f));
+  });
+
+  it("converts a bash drive path and keeps the spaced dir intact (the user's case)", () => {
+    const f = "/d/Projects/LLM Tests/qwen35b/tasktrack/__main__.py";
+    const got = dirForToolEvent("read", { path: f }, BASE)!;
+    // win32 → D:\...\tasktrack ; posix → /d/.../tasktrack. Assert structurally.
+    expect(got).toMatch(/tasktrack$/);
+    expect(got).toContain("LLM Tests");
+    expect(got).not.toContain("__main__.py");
+  });
+
+  it("accepts the file_path alias", () => {
+    expect(dirForToolEvent("read", { file_path: "/proj/lib/c.ts" }, BASE)).toBe(dirname("/proj/lib/c.ts"));
+  });
+
+  it("file tools resolve a relative path against baseDir", () => {
+    expect(dirForToolEvent("read", { path: "sub/x.ts" }, BASE)).toBe(resolve(BASE, "sub"));
+  });
+
+  it("file tools without a path return null", () => {
+    expect(dirForToolEvent("read", {}, BASE)).toBeNull();
+  });
+
+  it("dir tools (grep/ls/find) → the dir itself", () => {
+    expect(dirForToolEvent("ls", { path: "/some/dir" }, BASE)).toBe("/some/dir");
+    expect(dirForToolEvent("grep", { path: "/some/dir", pattern: "x" }, BASE)).toBe("/some/dir");
+  });
+
+  it("dir tools default to baseDir when path omitted", () => {
+    expect(dirForToolEvent("ls", {}, BASE)).toBe(BASE);
+    expect(dirForToolEvent("grep", { pattern: "x" }, BASE)).toBe(BASE);
+  });
+});
+
+describe("pickNewFiles", () => {
+  const f = (path: string) => ({ path, content: `# ${path}` });
+
+  it("drops files pi already loaded at startup", () => {
+    const s = {
+      piLoadedPaths: new Set(["/proj/claude.md"]), // pathKey lowercases
+      injected: new Set<string>(),
+    };
+    const out = pickNewFiles(s, [f("/proj/app/CLAUDE.md"), f("/proj/CLAUDE.md")]);
+    expect(out.map((x) => x.path)).toEqual(["/proj/app/CLAUDE.md"]);
+  });
+
+  it("dedups a parent file shared across two dirs (marks injected)", () => {
+    const s = { piLoadedPaths: new Set<string>(), injected: new Set<string>() };
+    const first = pickNewFiles(s, [f("/proj/a/CLAUDE.md"), f("/proj/CLAUDE.md")]);
+    expect(first.map((x) => x.path)).toEqual(["/proj/a/CLAUDE.md", "/proj/CLAUDE.md"]);
+    // Second dir shares /proj/CLAUDE.md — already injected, so only the new one
+    const second = pickNewFiles(s, [f("/proj/b/CLAUDE.md"), f("/proj/CLAUDE.md")]);
+    expect(second.map((x) => x.path)).toEqual(["/proj/b/CLAUDE.md"]);
+  });
+
+  it("preserves input order (caller passes deepest-first)", () => {
+    const s = { piLoadedPaths: new Set<string>(), injected: new Set<string>() };
+    const out = pickNewFiles(s, [f("/proj/a/b/CLAUDE.md"), f("/proj/CLAUDE.md")]);
+    expect(out.map((x) => x.path)).toEqual(["/proj/a/b/CLAUDE.md", "/proj/CLAUDE.md"]);
   });
 });

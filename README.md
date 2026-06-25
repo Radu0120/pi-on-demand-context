@@ -1,13 +1,20 @@
 # On-Demand Context Extension
 
-Loads `CLAUDE.md` and `AGENTS.md` context files when the model navigates directories using bash `cd`.
+Loads `CLAUDE.md` and `AGENTS.md` context files when the model works in a
+directory — by `cd`-ing into it, or by touching a file there with
+`read`/`edit`/`write`/`grep`/`ls`/`find`.
 
 ## How it works
 
 - pi auto-loads context files for the launch dir + parents at startup (unchanged)
-- Model runs `cd some/dir && pwd` to go deeper — no special tool needed
-- Extension detects the directory change and injects context from the new dir
-- Files pi already loaded (or a shared parent already injected) are **not** re-sent
+- Model `cd some/dir`, or reads/edits/greps a file anywhere — no special tool needed
+- Extension resolves the target directory and injects context from it (+ parents)
+- A `read`/`edit`/`write` loads the **file's** directory; `grep`/`ls`/`find` load
+  the searched directory; these do **not** move the bash working dir
+- Context is injected **once, durably** the moment a dir is touched (via
+  `sendMessage` with `deliverAs: "steer"`), so a dir's `CLAUDE.md` is in view
+  before the model acts there — same agent loop, no per-call re-send
+- Files pi already loaded (or a shared parent) are **not** re-sent
 - Multiple directories can be visited — context accumulates across the session
 
 ## Setup
