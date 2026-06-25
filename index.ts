@@ -1,15 +1,13 @@
 /**
  * On-Demand Context Extension
  *
- * Automatically loads CLAUDE.md / AGENTS.md context files when the model
- * navigates directories using bash `cd`. No special tool or command needed —
- * the model just runs `cd some/dir && pwd` as it normally would, and the
- * extension handles context loading transparently.
+ * Automatically loads CLAUDE.md / AGENTS.md context files when the model works
+ * in a directory — by `cd`-ing into it, or by touching a file there with any
+ * file tool (read/edit/write/grep/ls/find). No special tool needed; context is
+ * injected once, durably, the moment a dir is touched.
  *
- * Usage:
- * 1. Disable auto-loading: `--no-context-files` (or `-nc`)
- * 2. Model runs bash `cd some/dir && pwd` to navigate
- * 3. Context files are auto-injected into the system prompt
+ * Complements pi's own startup loader (deduped against it) — no
+ * `--no-context-files` flag required.
  *
  * Install to: ~/.pi/agent/extensions/on-demand-context/
  * Reload with: /reload
