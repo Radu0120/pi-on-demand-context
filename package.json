@@ -1,0 +1,45 @@
+{
+  "name": "@radu0120/pi-on-demand-context",
+  "version": "0.1.0",
+  "description": "Pi extension. Auto-loads CLAUDE.md / AGENTS.md context when the model navigates dirs with bash `cd` — no special tool, deduped against pi's own loader.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "context",
+    "claude.md",
+    "agents.md"
+  ],
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  },
+  "license": "MIT",
+  "author": "Radu0120 (https://github.com/Radu0120)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Radu0120/pi-on-demand-context.git"
+  },
+  "homepage": "https://github.com/Radu0120/pi-on-demand-context#readme",
+  "bugs": {
+    "url": "https://github.com/Radu0120/pi-on-demand-context/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
