@@ -15,8 +15,11 @@ No build step: the extension ships as raw `index.ts` (pi loads TypeScript direct
 A single-file [pi](https://github.com/earendil-works/pi-coding-agent) coding-agent
 extension. It auto-loads `CLAUDE.md` / `AGENTS.md` context files when the model
 navigates directories with bash `cd`, so deep dirs get their context without a
-dedicated tool. Install target: `~/.pi/agent/extensions/on-demand-context/`;
-reload in a running pi with `/reload`.
+dedicated tool.
+
+Install: `npm install -g @radu0120/pi-on-demand-context`, then register in
+`~/.pi/agent/settings.json` with `"@radu0120/pi-on-demand-context"`.
+Reload in a running pi with `/reload`.
 
 ## Architecture
 

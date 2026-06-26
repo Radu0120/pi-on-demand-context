@@ -17,13 +17,27 @@ directory — by `cd`-ing into it, or by touching a file there with
 - Files pi already loaded (or a shared parent) are **not** re-sent
 - Multiple directories can be visited — context accumulates across the session
 
+## Install
+
+```bash
+npm install -g @radu0120/pi-on-demand-context
+```
+
 ## Setup
 
-Just register the extension in `~/.pi/agent/settings.json`:
+Register the extension in `~/.pi/agent/settings.json`:
 
 ```json
 {
-  "extensions": ["~/.pi/agent/extensions/on-demand-context"]
+  "extensions": ["@radu0120/pi-on-demand-context"]
+}
+```
+
+Or use the local path:
+
+```json
+{
+  "extensions": ["~/.npm-global/lib/node_modules/@radu0120/pi-on-demand-context"]
 }
 ```
 
