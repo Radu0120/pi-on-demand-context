@@ -1,5 +1,5 @@
 {
-  "name": "@radu0120/pi-on-demand-context",
+  "name": "@quartermaster-labs/pi-on-demand-context",
   "version": "0.1.1",
   "description": "Pi extension. Auto-loads CLAUDE.md / AGENTS.md context when the model works in a dir — via bash `cd` or any file tool (read/edit/write/grep/ls/find). Injected once, durably; deduped against pi's own loader.",
   "keywords": [
@@ -20,11 +20,11 @@
   "author": "Radu0120 (https://github.com/Radu0120)",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Radu0120/pi-on-demand-context.git"
+    "url": "git+https://github.com/Quartermaster-Labs/pi-on-demand-context.git"
   },
-  "homepage": "https://github.com/Radu0120/pi-on-demand-context#readme",
+  "homepage": "https://github.com/Quartermaster-Labs/pi-on-demand-context#readme",
   "bugs": {
-    "url": "https://github.com/Radu0120/pi-on-demand-context/issues"
+    "url": "https://github.com/Quartermaster-Labs/pi-on-demand-context/issues"
   },
   "publishConfig": {
     "access": "public"

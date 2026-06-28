@@ -20,7 +20,7 @@ directory — by `cd`-ing into it, or by touching a file there with
 ## Install
 
 ```bash
-npm install -g @radu0120/pi-on-demand-context
+npm install -g @quartermaster-labs/pi-on-demand-context
 ```
 
 ## Setup
@@ -29,7 +29,7 @@ Register the extension in `~/.pi/agent/settings.json`:
 
 ```json
 {
-  "extensions": ["@radu0120/pi-on-demand-context"]
+  "extensions": ["@quartermaster-labs/pi-on-demand-context"]
 }
 ```
 
@@ -37,7 +37,7 @@ Or use the local path:
 
 ```json
 {
-  "extensions": ["~/.npm-global/lib/node_modules/@radu0120/pi-on-demand-context"]
+  "extensions": ["~/.npm-global/lib/node_modules/@quartermaster-labs/pi-on-demand-context"]
 }
 ```
 
