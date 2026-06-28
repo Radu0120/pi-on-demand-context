@@ -19,6 +19,8 @@ directory — by `cd`-ing into it, or by touching a file there with
 
 ## Install
 
+> Formerly published as `@radu0120/pi-on-demand-context`. Same package, republished under the `@quartermaster-labs` scope.
+
 ```bash
 npm install -g @quartermaster-labs/pi-on-demand-context
 ```
